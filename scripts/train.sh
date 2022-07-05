@@ -1,7 +1,7 @@
 #!/bin/bash
 
-PROJECT_PATH="$HOME/repo/svt"
-DATA_PATH="$HOME/data/kinetics/400/annotations"
+PROJECT_PATH="./"
+DATA_PATH="../datasets/kinetics_dataset/k400_resized/annotations_new"
 EXP_NAME="svt_test"
 
 cd "$PROJECT_PATH" || exit
@@ -26,5 +26,6 @@ python -m torch.distributed.launch \
   DATA.NO_FLOW_AUG False \
   DATA.USE_FLOW False \
   DATA.RAND_CONV False \
-  DATA.NO_SPATIAL False
+  DATA.NO_SPATIAL False \
+  DATA.RAND_FR True
 
