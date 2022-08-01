@@ -3,6 +3,8 @@
 .DS_Store
 checkpoints
 /data
+/eval
+/results
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
