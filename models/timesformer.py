@@ -523,6 +523,7 @@ class AuxTokenVisionTransformer(VisionTransformer):
             blk.class_tokens = 2
 
     def forward_features(self, x, get_all=False):
+        print('starting')
         B = x.shape[0]
         x, T, W = self.patch_embed(x)
         cls_tokens = self.cls_token.expand(x.size(0), -1, -1)
@@ -579,7 +580,9 @@ class AuxTokenVisionTransformer(VisionTransformer):
             return x
 
         if not self.training:
+            print('this one')
             return torch.cat((x[:, 0], x[:, -1]), dim=1)
+        print('nope this one')
         return x[:, 0], x[:, -1]  # class token, aux class token
 
     def forward(self, x, use_head=False):
