@@ -155,6 +155,15 @@ def train_svt(args):
     print("git:\n  {}\n".format(utils.get_sha()))
     print("\n".join("%s: %s" % (k, str(v)) for k, v in sorted(dict(vars(args)).items())))
     cudnn.benchmark = True
+    
+    print('Workers:',args.num_workers)
+    
+    # print(os.getcwd())
+    # print(os.listdir('../'))
+    # print(os.listdir('../datasets'))
+    # print(os.listdir('../datasets/kinetics-dataset'))
+    # print(os.listdir('../datasets/kinetics-dataset/k400_resized'))
+    # print(os.listdir('../datasets/kinetics-dataset/k400_resized/annotations_new'))
 
     # ============ preparing data ... ============
     config = load_config(args)
