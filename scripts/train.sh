@@ -2,7 +2,7 @@
 
 PROJECT_PATH="./"
 DATA_PATH="../datasets/kinetics_dataset/k400_resized/annotations_new"
-EXP_NAME="svt_test"
+EXP_NAME="args_test"
 
 cd "$PROJECT_PATH" || exit
 
@@ -10,10 +10,8 @@ if [ ! -d "checkpoints/$EXP_NAME" ]; then
   mkdir "checkpoints/$EXP_NAME"
 fi
 
-export CUDA_VISIBLE_DEVICES=0,1,2,3
-
 python -m torch.distributed.launch \
-  --nproc_per_node=4 \
+  --nproc_per_node=16 \
   --master_port="$RANDOM" \
   train_ssl.py \
   --arch "timesformer" \
@@ -27,5 +25,6 @@ python -m torch.distributed.launch \
   DATA.USE_FLOW False \
   DATA.RAND_CONV False \
   DATA.NO_SPATIAL False \
-  DATA.RAND_FR True
+  DATA.RAND_FR True \
+  SOLVER.MAX_EPOCH 20
 

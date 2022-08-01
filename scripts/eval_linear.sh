@@ -1,15 +1,14 @@
-#!/bin/bash
+PROJECT_PATH="./"
+DATA_PATH="../datasets/kinetics-dataset/k400_resized"
+DATASET="kinetics400"
 
-PROJECT_PATH="$HOME/repo/svt"
-EXP_NAME="le_001"
-DATASET="ucf101"
-DATA_PATH="${HOME}/repo/mmaction2/data/${DATASET}"
-CHECKPOINT="path/to/checkpoint.pth"
+EXP_NAME="svt_dino"
+CHECKPOINT="results/$EXP_NAME/checkpoint.pth"
 
 cd "$PROJECT_PATH" || exit
 
-if [ ! -d "checkpoints/$EXP_NAME" ]; then
-  mkdir "checkpoints/$EXP_NAME"
+if [ ! -d "eval/$EXP_NAME" ]; then
+  mkdir "eval/$EXP_NAME"
 fi
 
 export CUDA_VISIBLE_DEVICES=0
@@ -22,12 +21,11 @@ python -m torch.distributed.launch \
   --pretrained_weights "$CHECKPOINT" \
   --epochs 20 \
   --lr 0.001 \
-  --batch_size_per_gpu 16 \
+  --batch_size_per_gpu 8 \
   --num_workers 4 \
-  --num_labels 101 \
+  --num_labels 400 \
   --dataset "$DATASET" \
-  --output_dir "checkpoints/eval/$EXP_NAME" \
+  --output_dir "eval/$EXP_NAME" \
   --opts \
-  DATA.PATH_TO_DATA_DIR "${DATA_PATH}/splits" \
-  DATA.PATH_PREFIX f"${DATA_PATH}/videos" \
+  DATA.PATH_TO_DATA_DIR "${DATA_PATH}/annotations_svt" \
   DATA.USE_FLOW False
