@@ -187,7 +187,7 @@ def train(model, linear_classifier, optimizer, loader, epoch, n, avgpool):
     header = 'Epoch: [{}]'.format(epoch)
     for (inp, target, sample_idx, meta) in metric_logger.log_every(loader, 20, header):
         # move to gpu
-        inp = inp.cuda(non_blocking=True)
+        inp = inp[0].cuda(non_blocking=True)
         target = target.cuda(non_blocking=True)
 
         # forward
@@ -229,7 +229,7 @@ def validate_network(val_loader, model, linear_classifier, n, avgpool):
     header = 'Test:'
     for (inp, target, sample_idx, meta) in metric_logger.log_every(val_loader, 20, header):
         # move to gpu
-        inp = inp.cuda(non_blocking=True)
+        inp = inp[0].cuda(non_blocking=True)
         target = target.cuda(non_blocking=True)
 
         # forward
@@ -278,7 +278,7 @@ def validate_network_multi_view(val_loader, model, linear_classifier, n, avgpool
 
     for cur_iter, (inp, target, sample_idx, meta) in tqdm(enumerate(val_loader), total=len(val_loader)):
         # move to gpu
-        inp = inp.cuda(non_blocking=True)
+        inp = inp[0].cuda(non_blocking=True)
         # target = target.cuda(non_blocking=True)
         test_meter.data_toc()
 
