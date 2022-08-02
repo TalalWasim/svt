@@ -697,7 +697,7 @@ class DroppedVisionTransformer(nn.Module):
 
 
 
-def get_dropped_vit_base_patch16_224(cfg, no_head=False,  **kwargs):
+def get_dropped_vit_base_patch16_224(cfg, no_head=False,  no_mask=False, **kwargs):
     patch_size = 16
     vit = DroppedVisionTransformer(img_size=cfg.DATA.TRAIN_CROP_SIZE,
                                    patch_size=patch_size,
@@ -735,6 +735,10 @@ def get_dropped_vit_base_patch16_224(cfg, no_head=False,  **kwargs):
                     attention_type=vit.attention_type, pretrained_model=pretrained_model)
     if no_head:
         vit.head = None
+    if no_mask:
+        vit.decoder=None
+        vit.encoder_to_decoder=None
+
     return vit
 
 
