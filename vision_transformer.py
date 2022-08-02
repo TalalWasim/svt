@@ -281,7 +281,6 @@ class DINOHead(nn.Module):
         x = self.last_layer(x)
         return x
 
-
 class MultiDINOHead(nn.Module):
     def __init__(self, in_dim, out_dim, use_bn=False, norm_last_layer=True, nlayers=3, hidden_dim=2048,
                  bottleneck_dim=256):

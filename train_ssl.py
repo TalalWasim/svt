@@ -36,13 +36,35 @@ from vision_transformer import DINOHead, MultiDINOHead
 
 from datasets import Kinetics
 from datasets.rand_conv import RandConv
-from models import get_vit_base_patch16_224, get_aux_token_vit, SwinTransformer3D, S3D
+from models import get_vit_base_patch16_224, get_aux_token_vit, SwinTransformer3D, S3D, get_dropped_vit_base_patch16_224, get_masked_vit_base_patch16_224
 from utils.parser import load_config
 from eval_knn import extract_features, knn_classifier, UCFReturnIndexDataset, HMDBReturnIndexDataset
 
 torchvision_archs = sorted(name for name in torchvision_models.__dict__
                            if name.islower() and not name.startswith("__")
                            and callable(torchvision_models.__dict__[name]))
+
+
+def printer(x, name):
+    print('-------------')
+    print(name)
+    if isinstance(x, tuple):
+        print('tuple')
+        for i in x:
+            if isinstance(i, list):
+                print('list in tuple')
+                for j in i:
+                    print(j.shape)
+            else:
+                print(i.shape)
+
+    elif isinstance(x,list):
+        print('list')
+        for i in x:
+            print(i.shape)
+    else:
+        print(x.shape)
+    print('-------------')
 
 
 def get_args_parser():
@@ -213,10 +235,20 @@ def train_svt(args):
         if config.MODEL.TWO_TOKEN:
             student = get_aux_token_vit(cfg=config, no_head=True)
             teacher = get_aux_token_vit(cfg=config, no_head=True)
+        elif config.MODEL.MASKED:
+            student = get_masked_vit_base_patch16_224(cfg=config, no_head=True, no_mask=False)
+            teacher = get_masked_vit_base_patch16_224(cfg=config, no_head=True, no_mask=True)
+        elif config.MODEL.DROPPED:
+            student = get_dropped_vit_base_patch16_224(cfg=config, no_head=True, no_mask=False)
+            teacher = get_dropped_vit_base_patch16_224(cfg=config, no_head=True, no_mask=True)
         else:
             student = get_vit_base_patch16_224(cfg=config, no_head=True)
             teacher = get_vit_base_patch16_224(cfg=config, no_head=True)
-        embed_dim = student.embed_dim
+        
+        if config.MODEL.MASKED or config.MODEL.DROPPED:
+            embed_dim = student.encoder.embed_dim
+        else:
+            embed_dim = student.embed_dim
 
         if args.pretrained_rgb is not None:
             state_dict = torch.load(args.pretrained_rgb)["teacher"]
@@ -512,6 +544,21 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                 student_output = student(images[2:])  # 2 spatially local and 2 temporally global local views
                 teacher_output = teacher(images[:2])  # only 2 global views through the teacher
                 loss = dino_loss(student_output, teacher_output, epoch)
+            elif cfg.MODEL.MASKED or cfg.MODEL.DROPPED:
+                # masked/dropped student output on global
+                student_cls, student_mask_pred, student_mask_lab = student(images[:2], mask=True)
+                
+                # normal student output on local
+                student_output = student(images[2:], mask=False)
+                student_output = torch.cat((student_cls, student_output), 0)
+                
+                # normal output on teacher
+                teacher_output = teacher(images[:2])
+                
+                svt_loss = dino_loss(student_output, teacher_output, epoch)
+                mse_loss = F.mse_loss(student_mask_pred[0], student_mask_lab[0]) + F.mse_loss(student_mask_pred[1], student_mask_lab[1])
+                loss = svt_loss + mse_loss
+                
             else:
                 student_output = student(images)
                 if rand_conv is not None:
@@ -546,14 +593,21 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
 
         # EMA update for the teacher
         with torch.no_grad():
-            m = momentum_schedule[it]  # momentum parameter
-            for param_q, param_k in zip(student.module.parameters(), teacher_without_ddp.parameters()):
-                param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
-
-            if cfg.MODEL.TWO_STREAM:
-                for param_q, param_k in zip(motion_student.module.parameters(),
-                                            motion_teacher_without_ddp.parameters()):
+            if cfg.MODEL.MASKED or cfg.MODEL.DROPPED:
+                m = momentum_schedule[it]  # momentum parameter
+                for param_q, param_k in zip(student.module.backbone.encoder.parameters(), teacher_without_ddp.backbone.encoder.parameters()):
                     param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
+                for param_q, param_k in zip(student.module.head.parameters(), teacher_without_ddp.head.parameters()):
+                    param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
+            else:
+                m = momentum_schedule[it]  # momentum parameter
+                for param_q, param_k in zip(student.module.parameters(), teacher_without_ddp.parameters()):
+                    param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
+
+                if cfg.MODEL.TWO_STREAM:
+                    for param_q, param_k in zip(motion_student.module.parameters(),
+                                                motion_teacher_without_ddp.parameters()):
+                        param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
 
         # logging
         torch.cuda.synchronize()
