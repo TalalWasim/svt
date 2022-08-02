@@ -590,23 +590,52 @@ class MultiCropWrapper(nn.Module):
         if self.vary_fr:
             if len(x) == 10:
                 idx_crops = [1, 2, 4, 6, 8, 10]
+            elif len(x) == 8:
+                idx_crops = [2, 4, 6, 8]
             elif len(x) == 2:
                 idx_crops = [1, 2]
-        start_idx = 0
-        for end_idx in idx_crops:
-            _out = self.backbone(torch.cat(x[start_idx: end_idx]), **kwargs)
-            if start_idx == 0:
-                output = _out
-            else:
-                if isinstance(_out, tuple):
-                    output1 = torch.cat((output[0], _out[0]))
-                    output2 = torch.cat((output[1], _out[1]))
-                    output = (output1, output2)
+        
+        # if we have masking output is a tuple of outputs
+        if 'mask' in kwargs and kwargs['mask']==True:
+            mask_pred_list = []
+            mask_lab_list = []
+            
+            start_idx = 0
+            for end_idx in idx_crops:
+                x_cls, x_mask_pred, x_mask_lab = self.backbone(torch.cat(x[start_idx: end_idx]), **kwargs)
+                _out = x_cls
+                mask_pred_list.append(x_mask_pred)
+                mask_lab_list.append(x_mask_lab)
+                
+                if start_idx == 0:
+                    output = _out
                 else:
-                    output = torch.cat((output, _out))
-            start_idx = end_idx
-        # Run the head forward on the concatenated features.
-        return self.head(output)
+                    if isinstance(_out, tuple):
+                        output1 = torch.cat((output[0], _out[0]))
+                        output2 = torch.cat((output[1], _out[1]))
+                        output = (output1, output2)
+                    else:
+                        output = torch.cat((output, _out))
+                start_idx = end_idx
+            # Run the head forward on the concatenated features.
+            return self.head(output), mask_pred_list, mask_lab_list
+
+        else:
+            start_idx = 0
+            for end_idx in idx_crops:
+                _out = self.backbone(torch.cat(x[start_idx: end_idx]), **kwargs)
+                if start_idx == 0:
+                    output = _out
+                else:
+                    if isinstance(_out, tuple):
+                        output1 = torch.cat((output[0], _out[0]))
+                        output2 = torch.cat((output[1], _out[1]))
+                        output = (output1, output2)
+                    else:
+                        output = torch.cat((output, _out))
+                start_idx = end_idx
+            # Run the head forward on the concatenated features.
+            return self.head(output)
 
 
 def get_params_groups(model):

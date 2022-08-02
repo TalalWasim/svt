@@ -262,6 +262,8 @@ _C.TIMESFORMER.PRETRAINED_MODEL = ''
 _C.MODEL.TWO_STREAM = False
 _C.MODEL.TWO_TOKEN = False
 _C.MODEL.CNN_DISTILL = False
+_C.MODEL.MASKED = False
+_C.MODEL.DROPPED = False
 
 ## MixUp parameters
 _C.MIXUP = CfgNode()
