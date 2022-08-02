@@ -1,13 +1,11 @@
 #!/bin/bash
-#SBATCH --job-name=svt_dropped_30
+#SBATCH --job-name=svt_dino_100
 #SBATCH --partition=multigpu
 #SBATCH --time=168:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=16
 #SBATCH --cpus-per-task=6
 #SBATCH --gres=gpu:16
-
-
 
 PROJECT_PATH="./"
 DATA_PATH="../datasets/kinetics-dataset/k400_resized/annotations_svt"
@@ -24,7 +22,7 @@ python -m torch.distributed.launch \
   --master_port="$RANDOM" \
   train_ssl.py \
   --arch "timesformer" \
-  --batch_size_per_gpu 5 \
+  --batch_size_per_gpu 4 \
   --data_path "${DATA_PATH}" \
   --output_dir "./results/$EXP_NAME" \
   --num_workers 6 \
@@ -42,4 +40,4 @@ python -m torch.distributed.launch \
   DATA.RAND_FR True \
   NUM_GPUS 16 \
   DATA_LOADER.NUM_WORKERS 6 \
-  TIMESFORMER.PRETRAINED_MODEL '../pretrained/videomae_1600_trunc_1_pos.pth'
+  TIMESFORMER.PRETRAINED_MODEL '../pretrained/enc_mae_dec_vmae.pth'
