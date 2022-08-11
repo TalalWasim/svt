@@ -547,7 +547,7 @@ class DroppedVisionTransformerDecoder(nn.Module):
         # resizing the positional embeddings in case they don't match the input at inference
         if x.size(1) != self.pos_embed.size(1):
             pos_embed = self.pos_embed
-            other_pos_embed = pos_embed.unsqueeze(0).transpose(1, 2)
+            other_pos_embed = pos_embed.transpose(1, 2)
             P = int(other_pos_embed.size(2) ** 0.5)
             other_pos_embed = other_pos_embed.reshape(1, x.size(2), P, P)
             new_pos_embed = F.interpolate(other_pos_embed, size=(H, W), mode='nearest')
