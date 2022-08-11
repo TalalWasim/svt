@@ -36,7 +36,7 @@ from vision_transformer import DINOHead, MultiDINOHead
 
 from datasets import Kinetics
 from datasets.rand_conv import RandConv
-from models import get_vit_base_patch16_224, get_aux_token_vit, SwinTransformer3D, S3D, get_dropped_vit_base_patch16_224, get_masked_vit_base_patch16_224
+from models import get_vit_base_patch16_224, get_aux_token_vit, SwinTransformer3D, S3D, get_dropped_vit_base_patch16_224, get_masked_vit_base_patch16_224, get_masked_vit_base_patch16_224_no_decoder
 from utils.parser import load_config
 from eval_knn import extract_features, knn_classifier, UCFReturnIndexDataset, HMDBReturnIndexDataset
 
@@ -236,8 +236,12 @@ def train_svt(args):
             student = get_aux_token_vit(cfg=config, no_head=True)
             teacher = get_aux_token_vit(cfg=config, no_head=True)
         elif config.MODEL.MASKED:
-            student = get_masked_vit_base_patch16_224(cfg=config, no_head=True, no_mask=False)
-            teacher = get_masked_vit_base_patch16_224(cfg=config, no_head=True, no_mask=True)
+            if config.MODEL.NO_DECODER:
+                student = get_masked_vit_base_patch16_224_no_decoder(cfg=config, no_head=True)
+                teacher = get_masked_vit_base_patch16_224_no_decoder(cfg=config, no_head=True)
+            else:
+                student = get_masked_vit_base_patch16_224(cfg=config, no_head=True, no_mask=False)
+                teacher = get_masked_vit_base_patch16_224(cfg=config, no_head=True, no_mask=True)
         elif config.MODEL.DROPPED:
             student = get_dropped_vit_base_patch16_224(cfg=config, no_head=True, no_mask=False)
             teacher = get_dropped_vit_base_patch16_224(cfg=config, no_head=True, no_mask=True)
@@ -546,18 +550,28 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                 loss = dino_loss(student_output, teacher_output, epoch)
             elif cfg.MODEL.MASKED or cfg.MODEL.DROPPED:
                 # masked/dropped student output on global
-                student_cls, student_mask_pred, student_mask_lab = student(images[:2], mask=True)
+                if cfg.MODEL.LOCAL_MASK:
+                    _, student_mask_pred, student_mask_lab = student(images, mask=True)
+                else:
+                    _, student_mask_pred, student_mask_lab = student(images[:2], mask=True)
+                    
+                mae_loss = 0
+                for i in range(len(student_mask_pred)):
+                    mae_loss += F.mse_loss(student_mask_pred[i], student_mask_lab[i])
                 
-                # normal student output on local
-                student_output = student(images[2:], mask=False)
-                student_output = torch.cat((student_cls, student_output), 0)
+                # # joint forward pass
+                # student_output = student(images[2:], mask=False)
+                # student_output = torch.cat((student_cls, student_output), 0)
+                
+                # separate forward pass
+                student_output = student(images, mask=False)
                 
                 # normal output on teacher
-                teacher_output = teacher(images[:2])
+                teacher_output = teacher(images[:2], mask=False)
                 
                 svt_loss = dino_loss(student_output, teacher_output, epoch)
-                mse_loss = F.mse_loss(student_mask_pred[0], student_mask_lab[0]) + F.mse_loss(student_mask_pred[1], student_mask_lab[1])
-                loss = svt_loss + mse_loss
+                
+                loss = svt_loss + mae_loss
                 
             else:
                 student_output = student(images)
@@ -612,6 +626,8 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
         # logging
         torch.cuda.synchronize()
         metric_logger.update(loss=loss.item())
+        if cfg.MODEL.MASKED or cfg.MODEL.DROPPED:
+            metric_logger.update(mae_loss=mae_loss.item())
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(wd=optimizer.param_groups[0]["weight_decay"])
     # gather the stats from all processes

@@ -264,6 +264,8 @@ _C.MODEL.TWO_TOKEN = False
 _C.MODEL.CNN_DISTILL = False
 _C.MODEL.MASKED = False
 _C.MODEL.DROPPED = False
+_C.MODEL.NO_DECODER = False
+_C.MODEL.LOCAL_MASK = False
 
 ## MixUp parameters
 _C.MIXUP = CfgNode()
