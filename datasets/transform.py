@@ -724,8 +724,17 @@ class VideoDataAugmentationDINO(object):
         frames = self.normalize(frames)
 
         return frames
+    
+    def mask_transform(self, frames): 
+        frames = random_resized_crop(frames, size=224, scale=self.global_crops_scale, interpolation="bicubic")
+        frames = self.flip_and_color_jitter(frames)
+        if np.random.uniform() < 0.5:
+            frames = self.gaussian_blur(frames)
+        frames = self.normalize(frames)
 
-    def __call__(self, image, from_list=False, no_aug=False, two_token=False):
+        return frames
+
+    def __call__(self, image, from_list=False, no_aug=False, two_token=False, mask_and_crop=False, mask_only=False):
         if two_token:
             image = [x.float() / 255.0 if x.dtype == torch.uint8 else x for x in image]
             crops = [self.global_transform1(image[0]), self.no_aug(image[0]),
@@ -737,8 +746,22 @@ class VideoDataAugmentationDINO(object):
         elif from_list:
             image = [x.float() / 255.0 if x.dtype == torch.uint8 else x for x in image]
             crops = [self.global_transform1(image[0]), self.global_transform2(image[1])]
-            for local_image in image[2:]:
-                crops.append(self.local_transform(local_image))
+            
+            if mask_only:
+                for local_image in image[2:]:
+                    crops.append(self.mask_transform(local_image))
+            elif mask_and_crop:
+                count=0
+                for local_image in image[2:]:
+                    if count%2 == 0:
+                        crops.append(self.local_transform(local_image))
+                    else:
+                        crops.append(self.mask_transform(local_image))
+                    count += 1
+            else:
+                for local_image in image[2:]:
+                    crops.append(self.local_transform(local_image))
+
         else:
             if image.dtype == torch.uint8:
                 image = image.float()

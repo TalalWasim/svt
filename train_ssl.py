@@ -301,7 +301,7 @@ def train_svt(args):
         teacher = torchvision_models.__dict__[args.arch]()
         embed_dim = student.fc.weight.shape[1]
     else:
-        print(f"Unknow architecture: {args.arch}")
+        print(f"Unknown architecture: {args.arch}")
 
     if config.MODEL.CNN_DISTILL:
         cnn_model = S3D()
@@ -548,35 +548,105 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                 student_output = student(images[2:])  # 2 spatially local and 2 temporally global local views
                 teacher_output = teacher(images[:2])  # only 2 global views through the teacher
                 loss = dino_loss(student_output, teacher_output, epoch)
+            
             elif cfg.MODEL.MASKED or cfg.MODEL.DROPPED:
-                # masked/dropped student output on global
-                mae_loss = 0
-                
-                for i in range(cfg.MODEL.REPEAT_MASK):
-                    if cfg.MODEL.LOCAL_MASK:
-                        _, student_mask_pred, student_mask_lab = student(images, mask=True)
-                    else:
-                        _, student_mask_pred, student_mask_lab = student(images[:2], mask=True)
+                if cfg.MODEL.JOINT_MASK_CROP:
+                    # normal output on teacher
+                    teacher_output = teacher(images[:2], mask=False)
+                    
+                    # student output on global
+                    student_output = student(images[:2], mask=False)
 
+                    # mae output on global
+                    _, student_mask_pred, student_mask_lab = student(images[:2], mask=True)
+                    
+                    # student + mae output on local
+                    count = 0
+                    for img in images[2:]:
+                        if count % 2 == 0:
+                            # crop of 96xx96
+                            _, student_mask_pred_local, student_mask_lab_local = student(img, mask=True)
+                            student_cls_local = student(img, mask=False)
+
+                            student_output = torch.cat((student_output, student_cls_local), dim=0)
+                            student_mask_pred += student_mask_pred_local
+                            student_mask_lab += student_mask_lab_local
+                        else:
+                            # crop of 224x224
+                            student_cls_local, student_mask_pred_local, student_mask_lab_local = student(img, mask=True)
+
+                            student_output = torch.cat((student_output, student_cls_local), dim=0)
+                            student_mask_pred += student_mask_pred_local
+                            student_mask_lab += student_mask_lab_local
+
+                    # calculate svt loss
+                    svt_loss = dino_loss(student_output, teacher_output, epoch)
+
+                    # calculate mae loss
+                    mae_loss = 0
                     for i in range(len(student_mask_pred)):
                         mae_loss += F.mse_loss(student_mask_pred[i], student_mask_lab[i])
                     
-                    # del student_mask_pred
-                    # del student_mask_lab
+                    # calculate total loss
+                    loss = svt_loss + mae_loss
+
+                elif cfg.MODEL.JOINT_MASK_ONLY:
+                    # normal output on teacher
+                    teacher_output = teacher(images[:2], mask=False)
+                    
+                    # student output on global
+                    student_output = student(images[:2], mask=False)
+
+                    # mae output on global
+                    _, student_mask_pred_global, student_mask_lab_global = student(images[:2], mask=True)
+                    
+                    # student + mae output on local
+                    student_cls_local, student_mask_pred_local, student_mask_lab_local = student(images[2:], mask=True)
+
+                    # combine outputs
+                    student_output = torch.cat((student_output, student_cls_local), dim=0)
+                    student_mask_pred = student_mask_pred_global + student_mask_pred_local
+                    student_mask_lab = student_mask_lab_global + student_mask_lab_local
+
+                    # calculate svt loss
+                    svt_loss = dino_loss(student_output, teacher_output, epoch)
+
+                    # calculate mae loss
+                    mae_loss = 0
+                    for i in range(len(student_mask_pred)):
+                        mae_loss += F.mse_loss(student_mask_pred[i], student_mask_lab[i])
+                    
+                    # calculate total loss
+                    loss = svt_loss + mae_loss
+                else:
+                # masked/dropped student output on global
+                    mae_loss = 0
+                    
+                    for i in range(cfg.MODEL.REPEAT_MASK):
+                        if cfg.MODEL.LOCAL_MASK:
+                            _, student_mask_pred, student_mask_lab = student(images, mask=True)
+                        else:
+                            _, student_mask_pred, student_mask_lab = student(images[:2], mask=True)
+
+                        for i in range(len(student_mask_pred)):
+                            mae_loss += F.mse_loss(student_mask_pred[i], student_mask_lab[i])
+                        
+                        # del student_mask_pred
+                        # del student_mask_lab
+                        # torch.cuda.empty_cache()
+                    
+                    # separate forward pass
+                    student_output = student(images, mask=False)
+                    
+                    # normal output on teacher
+                    teacher_output = teacher(images[:2], mask=False)
+
+                    svt_loss = dino_loss(student_output, teacher_output, epoch)
+                    # del student_output
+                    # del teacher_output
                     # torch.cuda.empty_cache()
-                
-                # separate forward pass
-                student_output = student(images, mask=False)
-                
-                # normal output on teacher
-                teacher_output = teacher(images[:2], mask=False)
-                
-                svt_loss = dino_loss(student_output, teacher_output, epoch)
-                # del student_output
-                # del teacher_output
-                # torch.cuda.empty_cache()
-                
-                loss = svt_loss + cfg.MODEL.MASK_WEIGHT*(mae_loss)
+                    
+                    loss = svt_loss + cfg.MODEL.MASK_WEIGHT*(mae_loss)
                 
             else:
                 student_output = student(images)
@@ -584,6 +654,7 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                     teacher_output = teacher([images[0], rand_conv(images[1])])
                 else:
                     teacher_output = teacher(images[:2])  # only the 2 global views pass through the teacher
+                
                 loss = dino_loss(student_output, teacher_output, epoch)
 
         if not math.isfinite(loss.item()):

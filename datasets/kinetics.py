@@ -289,8 +289,8 @@ class Kinetics(torch.utils.data.Dataset):
 
                 # Perform data augmentation.
                 augmentation = VideoDataAugmentationDINO()
-                frames = augmentation(frames, from_list=True, no_aug=self.cfg.DATA.NO_SPATIAL,
-                                      two_token=self.cfg.MODEL.TWO_TOKEN)
+                frames = augmentation(frames, from_list=True, no_aug=self.cfg.DATA.NO_SPATIAL, two_token=self.cfg.MODEL.TWO_TOKEN,
+                                    mask_and_crop=self.cfg.MODEL.JOINT_MASK_CROP, mask_only=self.cfg.MODEL.JOINT_MASK_ONLY)
 
                 # T C H W -> C T H W.
                 frames = [rearrange(x, "t c h w -> c t h w") for x in frames]
