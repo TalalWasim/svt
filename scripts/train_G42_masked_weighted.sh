@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=svt_masked_30_local
+#SBATCH --job-name=svt_masked_weighted_30
 #SBATCH --partition=multigpu
 #SBATCH --time=168:00:00
 #SBATCH --nodes=1
@@ -8,8 +8,8 @@
 #SBATCH --gres=gpu:16
 
 PROJECT_PATH="./"
-DATA_PATH="../datasets/kinetics-dataset/k400_resized_2/annotations_svt"
-EXP_NAME="svt_masked_30_separate_local_mae_vmae"
+DATA_PATH="../datasets/kinetics-dataset/k400_resized_1/annotations_svt"
+EXP_NAME="svt_masked_weight_9_30_mae_vmae"
 
 cd "$PROJECT_PATH" || exit
 
@@ -17,12 +17,14 @@ if [ ! -d "./results/$EXP_NAME" ]; then
   mkdir "./results/$EXP_NAME"
 fi
 
+CUDA_LAUNCH_BLOCKING=1
+
 python -m torch.distributed.launch \
   --nproc_per_node=16 \
   --master_port="$RANDOM" \
   train_ssl.py \
   --arch "timesformer" \
-  --batch_size_per_gpu 2 \
+  --batch_size_per_gpu 3 \
   --data_path "${DATA_PATH}" \
   --output_dir "./results/$EXP_NAME" \
   --num_workers 6 \
@@ -33,8 +35,8 @@ python -m torch.distributed.launch \
   MODEL.TWO_TOKEN False \
   MODEL.DROPPED False \
   MODEL.MASKED True \
-  MODEL.LOCAL_MASK True \
-  MODEL.NO_DECODER False \
+  MODEL.REPEAT_MASK 1 \
+  MODEL.MASK_WEIGHT 9 \
   DATA.NO_FLOW_AUG False \
   DATA.USE_FLOW False \
   DATA.RAND_CONV False \

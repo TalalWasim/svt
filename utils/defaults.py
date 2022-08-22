@@ -266,6 +266,8 @@ _C.MODEL.MASKED = False
 _C.MODEL.DROPPED = False
 _C.MODEL.NO_DECODER = False
 _C.MODEL.LOCAL_MASK = False
+_C.MODEL.REPEAT_MASK = 1
+_C.MODEL.MASK_WEIGHT = 1
 
 ## MixUp parameters
 _C.MIXUP = CfgNode()

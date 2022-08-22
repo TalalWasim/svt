@@ -550,18 +550,20 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                 loss = dino_loss(student_output, teacher_output, epoch)
             elif cfg.MODEL.MASKED or cfg.MODEL.DROPPED:
                 # masked/dropped student output on global
-                if cfg.MODEL.LOCAL_MASK:
-                    _, student_mask_pred, student_mask_lab = student(images, mask=True)
-                else:
-                    _, student_mask_pred, student_mask_lab = student(images[:2], mask=True)
-                    
                 mae_loss = 0
-                for i in range(len(student_mask_pred)):
-                    mae_loss += F.mse_loss(student_mask_pred[i], student_mask_lab[i])
                 
-                # # joint forward pass
-                # student_output = student(images[2:], mask=False)
-                # student_output = torch.cat((student_cls, student_output), 0)
+                for i in range(cfg.MODEL.REPEAT_MASK):
+                    if cfg.MODEL.LOCAL_MASK:
+                        _, student_mask_pred, student_mask_lab = student(images, mask=True)
+                    else:
+                        _, student_mask_pred, student_mask_lab = student(images[:2], mask=True)
+
+                    for i in range(len(student_mask_pred)):
+                        mae_loss += F.mse_loss(student_mask_pred[i], student_mask_lab[i])
+                    
+                    # del student_mask_pred
+                    # del student_mask_lab
+                    # torch.cuda.empty_cache()
                 
                 # separate forward pass
                 student_output = student(images, mask=False)
@@ -570,8 +572,11 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                 teacher_output = teacher(images[:2], mask=False)
                 
                 svt_loss = dino_loss(student_output, teacher_output, epoch)
+                # del student_output
+                # del teacher_output
+                # torch.cuda.empty_cache()
                 
-                loss = svt_loss + mae_loss
+                loss = svt_loss + cfg.MODEL.MASK_WEIGHT*(mae_loss)
                 
             else:
                 student_output = student(images)
@@ -627,6 +632,7 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
         torch.cuda.synchronize()
         metric_logger.update(loss=loss.item())
         if cfg.MODEL.MASKED or cfg.MODEL.DROPPED:
+            metric_logger.update(svt_loss=svt_loss.item())
             metric_logger.update(mae_loss=mae_loss.item())
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(wd=optimizer.param_groups[0]["weight_decay"])

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=svt_masked_30_local
+#SBATCH --job-name=svt_masked_30_repeat
 #SBATCH --partition=multigpu
 #SBATCH --time=168:00:00
 #SBATCH --nodes=1
@@ -8,8 +8,8 @@
 #SBATCH --gres=gpu:16
 
 PROJECT_PATH="./"
-DATA_PATH="../datasets/kinetics-dataset/k400_resized_2/annotations_svt"
-EXP_NAME="svt_masked_30_separate_local_mae_vmae"
+DATA_PATH="../datasets/kinetics-dataset/k400_resized_1/annotations_svt"
+EXP_NAME="svt_masked_30_separate_repeat_mae_vmae"
 
 cd "$PROJECT_PATH" || exit
 
@@ -33,7 +33,8 @@ python -m torch.distributed.launch \
   MODEL.TWO_TOKEN False \
   MODEL.DROPPED False \
   MODEL.MASKED True \
-  MODEL.LOCAL_MASK True \
+  MODEL.LOCAL_MASK False \
+  MODEL.REPEAT_MASK 4 \
   MODEL.NO_DECODER False \
   DATA.NO_FLOW_AUG False \
   DATA.USE_FLOW False \

@@ -11,7 +11,7 @@
 
 PROJECT_PATH="./"
 DATA_PATH="../datasets/kinetics-dataset/k400_resized/annotations_svt"
-EXP_NAME="svt_mae_100"
+EXP_NAME="svt_mae_100_test"
 
 cd "$PROJECT_PATH" || exit
 
