@@ -692,7 +692,7 @@ def get_masked_vit_base_patch16_224(cfg, no_head=False, no_mask=False, **kwargs)
                                    drop_path_rate=0.1,
                                    num_frames=cfg.DATA.NUM_FRAMES,
                                    attention_type=cfg.TIMESFORMER.ATTENTION_TYPE,
-                                   mask_percentage=0.8,
+                                   mask_percentage=0.625,
                                    tubelet_size=1,
                                    init_values=0., **kwargs)
 
