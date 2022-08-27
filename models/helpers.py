@@ -110,7 +110,7 @@ def load_pretrained(model, cfg=None, num_classes=1000, in_chans=3, filter_fn=Non
             state_dict = load_state_dict(pretrained_model)
 
     if filter_fn is not None:
-        state_dict = filter_fn(state_dict)
+        state_dict = filter_fn(state_dict, tubelet_size=model.tubelet_size)
 
     if in_chans == 1:
         conv1_name = cfg['first_conv']

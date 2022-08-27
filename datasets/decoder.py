@@ -316,7 +316,8 @@ def decode(
     frames_length=None,
     temporal_aug=False,
     two_token=False,
-    rand_fr=False
+    rand_fr=False,
+    tubelet_size=1,
 ):
     """
     Decode the video and perform temporal sampling.
@@ -412,11 +413,14 @@ def decode(
         max_len = frames.shape[0]
 
         if rand_fr:
-            global_1 = temporal_sampling(frames, 0, max_len - 5, 4)
-            global_2 = temporal_sampling(frames, 5, max_len, 8)
+            global_1 = temporal_sampling(frames, 0, max_len - 5, 4*tubelet_size)
+            global_2 = temporal_sampling(frames, 5, max_len, 8*tubelet_size)
             local_samples = []
             local_width = max_len // 8
-            num_local_frames = [2, 2, 4, 4, 8, 8, 16, 16]
+            num_local_frames = [2*tubelet_size, 2*tubelet_size, 4*tubelet_size, 4*tubelet_size,
+                                8*tubelet_size, 8*tubelet_size, 16*tubelet_size, 16*tubelet_size]
+
+
             for l_idx in range(8):
                 random_idx = random.randint(0, max_len - local_width - 1)
                 cur_local = temporal_sampling(frames, random_idx, random_idx + local_width, num_local_frames[l_idx])

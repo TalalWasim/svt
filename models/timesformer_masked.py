@@ -259,17 +259,18 @@ class VideoPatchEmbed3D(nn.Module):
         self.img_size = img_size
         self.patch_size = patch_size
         self.num_patches = num_patches
-        self.proj3D = nn.Conv3d(in_channels=in_chans, out_channels=embed_dim, 
-                            kernel_size = (self.tubelet_size,  patch_size[0],patch_size[1]), 
-                            stride=(self.tubelet_size,  patch_size[0],  patch_size[1]))
+        self.proj = nn.Conv3d(in_channels=in_chans, out_channels=embed_dim, 
+                            kernel_size = (self.tubelet_size, patch_size[0], patch_size[1]), 
+                            stride=(self.tubelet_size, patch_size[0], patch_size[1]))
 
     def forward(self, x, **kwargs):
         B, C, T, H, W = x.shape
         # FIXME look at relaxing size constraints
-        assert H == self.img_size[0] and W == self.img_size[1], \
-            f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
-        x = self.proj3D(x).flatten(2).transpose(1, 2)
-        return x, T//self.tubelet_size, W//self.patch_size
+        # assert H == self.img_size[0] and W == self.img_size[1], \
+        #     f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
+        x = self.proj(x).flatten(2).transpose(1, 2)
+        x = rearrange(x, 'b (t n) m -> (b t) n m', b=B, t=T//self.tubelet_size)
+        return x, T//self.tubelet_size, W//self.patch_size[0]
 
 
 class MaskedVisionTransformerEncoder(nn.Module):
@@ -278,7 +279,7 @@ class MaskedVisionTransformerEncoder(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768, depth=12,
                  num_heads=12, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
                  drop_path_rate=0.1, hybrid_backbone=None, norm_layer=nn.LayerNorm, num_frames=8,
-                 attention_type='divided_space_time', dropout=0., mask_percentage=0.8):
+                 attention_type='divided_space_time', dropout=0., mask_percentage=0.8, tubelet_size=1):
         super().__init__()
         self.attention_type = attention_type
         self.depth = depth
@@ -286,14 +287,19 @@ class MaskedVisionTransformerEncoder(nn.Module):
         self.num_classes = num_classes
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
         self.mask_percentage = mask_percentage
+        self.tubelet_size = tubelet_size
         
-        self.patch_embed = PatchEmbed(
-            img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
-        num_patches = self.patch_embed.num_patches
+        if tubelet_size>1:
+            self.patch_embed = VideoPatchEmbed3D(img_size=img_size, patch_size=patch_size, in_chans=in_chans,
+                                                embed_dim=embed_dim, num_frames=num_frames, tubelet_size=tubelet_size)
+            self.num_patches = self.patch_embed.num_patches // (num_frames//tubelet_size)
+        else:
+            self.patch_embed = PatchEmbed(img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
+            self.num_patches = self.patch_embed.num_patches
 
         # Positional Embeddings
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches + 1, embed_dim))
         self.pos_drop = nn.Dropout(p=drop_rate)
         if self.attention_type != 'space_only':
             self.time_embed = nn.Parameter(torch.zeros(1, num_frames, embed_dim))
@@ -412,7 +418,6 @@ class MaskedVisionTransformerEncoder(nn.Module):
             masks = default_collate(masks)
             masks = masks.to(x.device)
             
-            x_mask_lab = x[masks].clone().reshape(B, -1, C)
             x[masks] = 0
             x = torch.cat((cls_tokens, x), dim=1)
 
@@ -435,7 +440,7 @@ class MaskedVisionTransformerEncoder(nn.Module):
 
         x = self.norm(x)
         if mask:
-            return (x[:,0], x[:,1:,:], x_mask_lab, masks, W, H, T)
+            return (x[:,0], x[:,1:,:], masks, W, H, T)
         if get_all:
             return x
         return x[:, 0]
@@ -543,7 +548,7 @@ class MaskedVisionTransformerDecoder(nn.Module):
         self.num_classes = num_classes
         self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
 
-    def forward(self, x, masks, W, H, T, get_masked=True):
+    def forward(self, x, masks, W, H, T, get_masked=False):
         
         # x[B, 1568, 512]
         B, num_tokens, C = x.shape
@@ -644,11 +649,12 @@ class MaskedVisionTransformer(nn.Module):
             num_frames=num_frames,
             attention_type=attention_type,
             dropout=dropout, 
-            mask_percentage=mask_percentage)
+            mask_percentage=mask_percentage,
+            tubelet_size=tubelet_size)
 
         self.decoder = MaskedVisionTransformerDecoder(
             patch_size=patch_size, 
-            num_patches=self.encoder.patch_embed.num_patches,
+            num_patches=self.encoder.num_patches,
             num_classes=decoder_num_classes, 
             embed_dim=decoder_embed_dim, 
             depth=decoder_depth,
@@ -687,25 +693,27 @@ class MaskedVisionTransformer(nn.Module):
             x_cls = self.encoder(x)
             return x_cls
 
-        x_cls, x_vis, x_mask_lab, masks, W, H, T = self.encoder(x, mask=mask)
+        x_cls, x_vis, masks, W, H, T = self.encoder(x, mask=mask)
         x_vis = self.encoder_to_decoder(x_vis)
         x_mask_pred = self.decoder(x_vis, masks, W, H, T, get_masked=True)
 
-        return (x_cls, x_mask_pred, x_mask_lab)
-
-
-
+        return (x_cls, x_mask_pred, masks)
 
 
 def get_masked_vit_base_patch16_224(cfg, no_head=False, no_mask=False, **kwargs):
     patch_size = 16
+    if cfg.MODEL.TUBELET_SIZE==1:
+        decoder_num_classes=768
+    else:
+        decoder_num_classes=1536
+
     vit = MaskedVisionTransformer(img_size=cfg.DATA.TRAIN_CROP_SIZE,
                                    patch_size=patch_size,
                                    encoder_num_classes=cfg.MODEL.NUM_CLASSES,
                                    encoder_embed_dim=768,
                                    encoder_depth=12,
                                    encoder_num_heads=12,
-                                   decoder_num_classes=768,
+                                   decoder_num_classes=decoder_num_classes,
                                    decoder_embed_dim=384,
                                    decoder_depth=4,
                                    decoder_num_heads=6,
@@ -717,8 +725,8 @@ def get_masked_vit_base_patch16_224(cfg, no_head=False, no_mask=False, **kwargs)
                                    drop_path_rate=0.1,
                                    num_frames=cfg.DATA.NUM_FRAMES,
                                    attention_type=cfg.TIMESFORMER.ATTENTION_TYPE,
-                                   mask_percentage=0.625,
-                                   tubelet_size=1,
+                                   mask_percentage=cfg.MODEL.MASK_PERCENTAGE,
+                                   tubelet_size=cfg.MODEL.TUBELET_SIZE,
                                    init_values=0., **kwargs)
 
     
@@ -729,8 +737,8 @@ def get_masked_vit_base_patch16_224(cfg, no_head=False, no_mask=False, **kwargs)
         vit.encoder_to_decoder=None
     
     vit.attention_type = cfg.TIMESFORMER.ATTENTION_TYPE
-    vit.encoder.num_patches = (cfg.DATA.TRAIN_CROP_SIZE // patch_size) * (cfg.DATA.TRAIN_CROP_SIZE // patch_size)
-    vit.load_state_dict(torch.load(cfg.TIMESFORMER.PRETRAINED_MODEL), strict=False)
+    # if len(cfg.TIMESFORMER.PRETRAINED_MODEL)>0:
+    #     vit.load_state_dict(torch.load(cfg.TIMESFORMER.PRETRAINED_MODEL), strict=False)
 
     
     return vit

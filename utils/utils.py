@@ -598,14 +598,14 @@ class MultiCropWrapper(nn.Module):
         # if we have masking output is a tuple of outputs
         if 'mask' in kwargs and kwargs['mask']==True:
             mask_pred_list = []
-            mask_lab_list = []
+            masks_list = []
             
             start_idx = 0
             for end_idx in idx_crops:
-                x_cls, x_mask_pred, x_mask_lab = self.backbone(torch.cat(x[start_idx: end_idx]), **kwargs)
+                x_cls, x_mask_pred, x_masks = self.backbone(torch.cat(x[start_idx: end_idx]), **kwargs)
                 _out = x_cls
                 mask_pred_list.append(x_mask_pred)
-                mask_lab_list.append(x_mask_lab)
+                masks_list.append(x_masks)
                 
                 if start_idx == 0:
                     output = _out
@@ -618,7 +618,7 @@ class MultiCropWrapper(nn.Module):
                         output = torch.cat((output, _out))
                 start_idx = end_idx
             # Run the head forward on the concatenated features.
-            return self.head(output), mask_pred_list, mask_lab_list
+            return self.head(output), mask_pred_list, masks_list
 
         else:
             start_idx = 0

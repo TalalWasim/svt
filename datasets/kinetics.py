@@ -232,7 +232,8 @@ class Kinetics(torch.utils.data.Dataset):
                 max_spatial_scale=min_scale,
                 temporal_aug=self.mode == "train" and not self.cfg.DATA.NO_RGB_AUG,
                 two_token=self.cfg.MODEL.TWO_TOKEN,
-                rand_fr=self.cfg.DATA.RAND_FR
+                rand_fr=self.cfg.DATA.RAND_FR,
+                tubelet_size=self.cfg.MODEL.TUBELET_SIZE
             )
 
             # If decoding failed (wrong format, video is too short, and etc),

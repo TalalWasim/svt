@@ -36,9 +36,10 @@ from vision_transformer import DINOHead, MultiDINOHead
 
 from datasets import Kinetics
 from datasets.rand_conv import RandConv
-from models import get_vit_base_patch16_224, get_aux_token_vit, SwinTransformer3D, S3D, get_dropped_vit_base_patch16_224, get_masked_vit_base_patch16_224, get_masked_vit_base_patch16_224_no_decoder
+from models import get_vit_base_patch16_224, SwinTransformer3D, S3D, get_dropped_vit_base_patch16_224, get_masked_vit_base_patch16_224, get_masked_vit_base_patch16_224_no_decoder
 from utils.parser import load_config
 from eval_knn import extract_features, knn_classifier, UCFReturnIndexDataset, HMDBReturnIndexDataset
+from einops import rearrange
 
 torchvision_archs = sorted(name for name in torchvision_models.__dict__
                            if name.islower() and not name.startswith("__")
@@ -621,15 +622,28 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                 else:
                 # masked/dropped student output on global
                     mae_loss = 0
+                    tubelet_size = cfg.MODEL.TUBELET_SIZE
                     
                     for i in range(cfg.MODEL.REPEAT_MASK):
                         if cfg.MODEL.LOCAL_MASK:
-                            _, student_mask_pred, student_mask_lab = student(images, mask=True)
+                            _, student_mask_pred, student_masks = student(images, mask=True)
+                            
                         else:
-                            _, student_mask_pred, student_mask_lab = student(images[:2], mask=True)
-
+                            _, student_mask_pred, student_masks = student(images[:2], mask=True)
+                        
+                        count=0
                         for i in range(len(student_mask_pred)):
-                            mae_loss += F.mse_loss(student_mask_pred[i], student_mask_lab[i])
+                            if i>1:
+                                img = torch.cat((images[i+count], images[i+count+1]), dim=0)
+                                count += 1
+                            else:
+                                img = images[i]
+
+                            video_patch = rearrange(img, 'b c (t p0) (h p1) (w p2) -> b (t h w) (p0 p1 p2 c)', p0=tubelet_size, p1=16, p2=16)
+                            B_v, _, C_v = video_patch.shape
+                            label = video_patch[student_masks[i]].reshape(B_v, -1, C_v)
+
+                            mae_loss += F.mse_loss(student_mask_pred[i], label)
                         
                         # del student_mask_pred
                         # del student_mask_lab

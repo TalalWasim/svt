@@ -1,4 +1,4 @@
-from .timesformer import get_vit_base_patch16_224, get_aux_token_vit
+from .timesformer import get_vit_base_patch16_224
 from .timesformer_masked import get_masked_vit_base_patch16_224
 from .timesformer_masked_no_decoder import get_masked_vit_base_patch16_224_no_decoder
 from .timesformer_dropped import get_dropped_vit_base_patch16_224

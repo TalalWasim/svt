@@ -221,17 +221,18 @@ class VideoPatchEmbed3D(nn.Module):
         self.img_size = img_size
         self.patch_size = patch_size
         self.num_patches = num_patches
-        self.proj3D = nn.Conv3d(in_channels=in_chans, out_channels=embed_dim, 
-                            kernel_size = (self.tubelet_size,  patch_size[0],patch_size[1]), 
-                            stride=(self.tubelet_size,  patch_size[0],  patch_size[1]))
+        self.proj = nn.Conv3d(in_channels=in_chans, out_channels=embed_dim, 
+                            kernel_size = (self.tubelet_size, patch_size[0], patch_size[1]), 
+                            stride=(self.tubelet_size, patch_size[0], patch_size[1]))
 
     def forward(self, x, **kwargs):
         B, C, T, H, W = x.shape
         # FIXME look at relaxing size constraints
-        assert H == self.img_size[0] and W == self.img_size[1], \
-            f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
-        x = self.proj3D(x).flatten(2).transpose(1, 2)
-        return x, T//self.tubelet_size, W//self.patch_size
+        # assert H == self.img_size[0] and W == self.img_size[1], \
+        #     f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
+        x = self.proj(x).flatten(2).transpose(1, 2)
+        x = rearrange(x, 'b (t n) m -> (b t) n m', b=B, t=T//self.tubelet_size)
+        return x, T//self.tubelet_size, W//self.patch_size[0]
 
 
 class VisionTransformer(nn.Module):
@@ -240,20 +241,26 @@ class VisionTransformer(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768, depth=12,
                  num_heads=12, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
                  drop_path_rate=0.1, hybrid_backbone=None, norm_layer=nn.LayerNorm, num_frames=8,
-                 attention_type='divided_space_time', dropout=0.):
+                 attention_type='divided_space_time', dropout=0., tubelet_size=1,):
         super().__init__()
         self.attention_type = attention_type
         self.depth = depth
         self.dropout = nn.Dropout(dropout)
         self.num_classes = num_classes
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
-        self.patch_embed = PatchEmbed(
-            img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
-        num_patches = self.patch_embed.num_patches
+        self.tubelet_size = tubelet_size
+
+        if tubelet_size>1:
+            self.patch_embed = VideoPatchEmbed3D(img_size=img_size, patch_size=patch_size, in_chans=in_chans,
+                                                embed_dim=embed_dim, num_frames=num_frames, tubelet_size=tubelet_size)
+            self.num_patches = self.patch_embed.num_patches // (num_frames//tubelet_size)
+        else:
+            self.patch_embed = PatchEmbed(img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
+            self.num_patches = self.patch_embed.num_patches
 
         # Positional Embeddings
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches + 1, embed_dim))
         self.pos_drop = nn.Dropout(p=drop_rate)
         if self.attention_type != 'space_only':
             self.time_embed = nn.Parameter(torch.zeros(1, num_frames, embed_dim))
@@ -389,233 +396,19 @@ class VisionTransformer(nn.Module):
                 return blk(x, return_attention=True)
 
 
-def _conv_filter(state_dict, patch_size=16):
+def _conv_filter(state_dict, patch_size=16, tubelet_size=1):
     """ convert patch embedding weight from manual patchify + linear proj to conv"""
     out_dict = {}
     for k, v in state_dict.items():
         if 'patch_embed.proj.weight' in k:
             if v.shape[-1] != patch_size:
                 patch_size = v.shape[-1]
-            v = v.reshape((v.shape[0], 3, patch_size, patch_size))
+            if tubelet_size == 1:
+                v = v.reshape((v.shape[0], 3, patch_size, patch_size))
+            else:
+                v = v.reshape((v.shape[0], 3, tubelet_size, patch_size, patch_size))
         out_dict[k] = v
     return out_dict
-
-
-class vit_base_patch16_224(nn.Module):
-    def __init__(self, cfg, **kwargs):
-        super(vit_base_patch16_224, self).__init__()
-        self.pretrained = True
-        patch_size = 16
-        self.model = VisionTransformer(img_size=cfg.DATA.TRAIN_CROP_SIZE, num_classes=cfg.MODEL.NUM_CLASSES,
-                                       patch_size=patch_size, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4,
-                                       qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), drop_rate=0.,
-                                       attn_drop_rate=0., drop_path_rate=0.1, num_frames=cfg.DATA.NUM_FRAMES,
-                                       attention_type=cfg.TIMESFORMER.ATTENTION_TYPE, **kwargs)
-
-        self.attention_type = cfg.TIMESFORMER.ATTENTION_TYPE
-        self.model.default_cfg = default_cfgs['vit_base_patch16_224']
-        self.num_patches = (cfg.DATA.TRAIN_CROP_SIZE // patch_size) * (cfg.DATA.TRAIN_CROP_SIZE // patch_size)
-        pretrained_model = cfg.TIMESFORMER.PRETRAINED_MODEL
-        if self.pretrained:
-            load_pretrained(self.model, num_classes=self.model.num_classes, in_chans=kwargs.get('in_chans', 3),
-                            filter_fn=_conv_filter, img_size=cfg.DATA.TRAIN_CROP_SIZE, num_patches=self.num_patches,
-                            attention_type=self.attention_type, pretrained_model=pretrained_model)
-
-    def forward(self, x):
-        x = self.model(x)
-        return x
-
-
-class TimeSformer(nn.Module):
-    def __init__(self, img_size=224, patch_size=16, num_classes=400, num_frames=8, attention_type='divided_space_time',
-                 pretrained_model='', **kwargs):
-        super(TimeSformer, self).__init__()
-        self.pretrained = True
-        self.model = VisionTransformer(img_size=img_size, num_classes=num_classes, patch_size=patch_size, embed_dim=768,
-                                       depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
-                                       norm_layer=partial(nn.LayerNorm, eps=1e-6), drop_rate=0., attn_drop_rate=0.,
-                                       drop_path_rate=0.1, num_frames=num_frames, attention_type=attention_type,
-                                       **kwargs)
-
-        self.attention_type = attention_type
-        self.model.default_cfg = default_cfgs['vit_base_patch' + str(patch_size) + '_224']
-        self.num_patches = (img_size // patch_size) * (img_size // patch_size)
-        if self.pretrained:
-            load_pretrained(self.model, num_classes=self.model.num_classes, in_chans=kwargs.get('in_chans', 3),
-                            filter_fn=_conv_filter, img_size=img_size, num_frames=num_frames,
-                            num_patches=self.num_patches, attention_type=self.attention_type,
-                            pretrained_model=pretrained_model)
-
-    def forward(self, x):
-        x = self.model(x)
-        return x
-
-
-class FlowTokenVisionTransformer(VisionTransformer):
-    def __init__(self, *args, img_size=224, patch_size=16, in_chans=3, embed_dim=768, **kwargs):
-        super(FlowTokenVisionTransformer, self).__init__(*args, img_size=img_size, patch_size=patch_size,
-                                                        in_chans=in_chans, embed_dim=embed_dim, **kwargs)
-
-        self.aux_cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.n_cls_tokens = 2
-        self.pos_embed = nn.Parameter(torch.zeros(1,  self.patch_embed.num_patches + self.n_cls_tokens, embed_dim))
-        self.flow_patch_embed = PatchEmbed(
-            img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
-        for blk in self.blocks:
-            blk.class_tokens = 2
-
-    def forward_features(self, x, get_all=False, is_flow=False):
-        B = x.shape[0]
-        if is_flow:
-            x, T, W = self.flow_patch_embed(x)
-        else:
-            x, T, W = self.patch_embed(x)
-        cls_tokens = self.cls_token.expand(x.size(0), -1, -1)
-        aux_cls_tokens = self.aux_cls_token.expand(x.size(0), -1, -1)
-        x = torch.cat((cls_tokens, x, aux_cls_tokens), dim=1)
-
-        # resizing the positional embeddings in case they don't match the input at inference
-        if x.size(1) != self.pos_embed.size(1):
-            pos_embed = self.pos_embed
-            cls_pos_embed = pos_embed[0, 0, :].unsqueeze(0).unsqueeze(1)
-            aux_pos_embed = pos_embed[0, -1, :].unsqueeze(0).unsqueeze(1)
-            other_pos_embed = pos_embed[0, 1:-1, :].unsqueeze(0).transpose(1, 2)
-            P = int(other_pos_embed.size(2) ** 0.5)
-            H = x.size(1) // W
-            other_pos_embed = other_pos_embed.reshape(1, x.size(2), P, P)
-            new_pos_embed = F.interpolate(other_pos_embed, size=(H, W), mode='nearest')
-            new_pos_embed = new_pos_embed.flatten(2)
-            new_pos_embed = new_pos_embed.transpose(1, 2)
-            new_pos_embed = torch.cat((cls_pos_embed, new_pos_embed, aux_pos_embed), 1)
-            x = x + new_pos_embed
-        else:
-            x = x + self.pos_embed
-        x = self.pos_drop(x)
-
-        # Time Embeddings
-        if self.attention_type != 'space_only':
-            cls_tokens = x[:B, 0, :].unsqueeze(1)
-            aux_cls_tokens = x[:B, -1, :].unsqueeze(1)
-            x = x[:, 1:-1]
-            x = rearrange(x, '(b t) n m -> (b n) t m', b=B, t=T)
-            # Resizing time embeddings in case they don't match
-            if T != self.time_embed.size(1):
-                time_embed = self.time_embed.transpose(1, 2)
-                new_time_embed = F.interpolate(time_embed, size=(T), mode='nearest')
-                new_time_embed = new_time_embed.transpose(1, 2)
-                x = x + new_time_embed
-            else:
-                x = x + self.time_embed
-            x = self.time_drop(x)
-            x = rearrange(x, '(b n) t m -> b (n t) m', b=B, t=T)
-            x = torch.cat((cls_tokens, x, aux_cls_tokens), dim=1)
-
-        # Attention blocks
-        for blk in self.blocks:
-            x = blk(x, B, T, W)
-
-        # Predictions for space-only baseline
-        if self.attention_type == 'space_only':
-            x = rearrange(x, '(b t) n m -> b t n m', b=B, t=T)
-            x = torch.mean(x, 1)  # averaging predictions for every frame
-
-        x = self.norm(x)
-        if get_all:
-            return x
-
-        if not self.training:
-            return torch.cat((x[:, 0], x[:, -1]), dim=1)
-        if is_flow:
-            return x[:, -1]  # aux class token
-        else:
-            return x[:, 0]  # class token
-
-    def forward(self, x, use_head=False, is_flow=False):
-        x = self.forward_features(x, is_flow=is_flow)
-        if use_head:
-            x = self.head(x)
-        return x
-
-
-class AuxTokenVisionTransformer(VisionTransformer):
-    def __init__(self, *args, img_size=224, patch_size=16, in_chans=3, embed_dim=768, **kwargs):
-        super(AuxTokenVisionTransformer, self).__init__(*args, img_size=img_size, patch_size=patch_size,
-                                                        in_chans=in_chans, embed_dim=embed_dim, **kwargs)
-        self.aux_cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.n_cls_tokens = 2
-        self.pos_embed = nn.Parameter(torch.zeros(1,  self.patch_embed.num_patches + self.n_cls_tokens, embed_dim))
-        for blk in self.blocks:
-            blk.class_tokens = 2
-
-    def forward_features(self, x, get_all=False):
-        print('starting')
-        B = x.shape[0]
-        x, T, W = self.patch_embed(x)
-        cls_tokens = self.cls_token.expand(x.size(0), -1, -1)
-        aux_cls_tokens = self.aux_cls_token.expand(x.size(0), -1, -1)
-        x = torch.cat((cls_tokens, x, aux_cls_tokens), dim=1)
-
-        # resizing the positional embeddings in case they don't match the input at inference
-        if x.size(1) != self.pos_embed.size(1):
-            pos_embed = self.pos_embed
-            cls_pos_embed = pos_embed[0, 0, :].unsqueeze(0).unsqueeze(1)
-            aux_pos_embed = pos_embed[0, -1, :].unsqueeze(0).unsqueeze(1)
-            other_pos_embed = pos_embed[0, 1:-1, :].unsqueeze(0).transpose(1, 2)
-            P = int(other_pos_embed.size(2) ** 0.5)
-            H = x.size(1) // W
-            other_pos_embed = other_pos_embed.reshape(1, x.size(2), P, P)
-            new_pos_embed = F.interpolate(other_pos_embed, size=(H, W), mode='nearest')
-            new_pos_embed = new_pos_embed.flatten(2)
-            new_pos_embed = new_pos_embed.transpose(1, 2)
-            new_pos_embed = torch.cat((cls_pos_embed, new_pos_embed, aux_pos_embed), 1)
-            x = x + new_pos_embed
-        else:
-            x = x + self.pos_embed
-        x = self.pos_drop(x)
-
-        # Time Embeddings
-        if self.attention_type != 'space_only':
-            cls_tokens = x[:B, 0, :].unsqueeze(1)
-            aux_cls_tokens = x[:B, -1, :].unsqueeze(1)
-            x = x[:, 1:-1]
-            x = rearrange(x, '(b t) n m -> (b n) t m', b=B, t=T)
-            # Resizing time embeddings in case they don't match
-            if T != self.time_embed.size(1):
-                time_embed = self.time_embed.transpose(1, 2)
-                new_time_embed = F.interpolate(time_embed, size=(T), mode='nearest')
-                new_time_embed = new_time_embed.transpose(1, 2)
-                x = x + new_time_embed
-            else:
-                x = x + self.time_embed
-            x = self.time_drop(x)
-            x = rearrange(x, '(b n) t m -> b (n t) m', b=B, t=T)
-            x = torch.cat((cls_tokens, x, aux_cls_tokens), dim=1)
-
-        # Attention blocks
-        for blk in self.blocks:
-            x = blk(x, B, T, W)
-
-        # Predictions for space-only baseline
-        if self.attention_type == 'space_only':
-            x = rearrange(x, '(b t) n m -> b t n m', b=B, t=T)
-            x = torch.mean(x, 1)  # averaging predictions for every frame
-
-        x = self.norm(x)
-        if get_all:
-            return x
-
-        if not self.training:
-            print('this one')
-            return torch.cat((x[:, 0], x[:, -1]), dim=1)
-        print('nope this one')
-        return x[:, 0], x[:, -1]  # class token, aux class token
-
-    def forward(self, x, use_head=False):
-        x = self.forward_features(x)
-        if use_head:
-            x = self.head(x)
-        return x
-
 
 def get_vit_base_patch16_224(cfg, no_head=False, **kwargs):
     patch_size = 16
@@ -623,10 +416,9 @@ def get_vit_base_patch16_224(cfg, no_head=False, **kwargs):
                             patch_size=patch_size, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4,
                             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), drop_rate=0.,
                             attn_drop_rate=0., drop_path_rate=0.1, num_frames=cfg.DATA.NUM_FRAMES,
-                            attention_type=cfg.TIMESFORMER.ATTENTION_TYPE, **kwargs)
+                            attention_type=cfg.TIMESFORMER.ATTENTION_TYPE, tubelet_size=cfg.MODEL.TUBELET_SIZE, **kwargs)
     vit.attention_type = cfg.TIMESFORMER.ATTENTION_TYPE
     vit.default_cfg = default_cfgs['vit_base_patch16_224']
-    vit.num_patches = (cfg.DATA.TRAIN_CROP_SIZE // patch_size) * (cfg.DATA.TRAIN_CROP_SIZE // patch_size)
     pretrained_model = cfg.TIMESFORMER.PRETRAINED_MODEL
     if pretrained_model:
         load_pretrained(vit, num_classes=vit.num_classes, in_chans=kwargs.get('in_chans', 3),
@@ -635,44 +427,3 @@ def get_vit_base_patch16_224(cfg, no_head=False, **kwargs):
     if no_head:
         vit.head = None
     return vit
-
-
-def get_aux_token_vit(cfg, no_head=False, **kwargs):
-    patch_size = 16
-    vit = AuxTokenVisionTransformer(img_size=cfg.DATA.TRAIN_CROP_SIZE, num_classes=cfg.MODEL.NUM_CLASSES,
-                            patch_size=patch_size, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4,
-                            qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), drop_rate=0.,
-                            attn_drop_rate=0., drop_path_rate=0.1, num_frames=cfg.DATA.NUM_FRAMES,
-                            attention_type=cfg.TIMESFORMER.ATTENTION_TYPE, **kwargs)
-    vit.attention_type = cfg.TIMESFORMER.ATTENTION_TYPE
-    vit.default_cfg = default_cfgs['vit_base_patch16_224']
-    vit.num_patches = (cfg.DATA.TRAIN_CROP_SIZE // patch_size) * (cfg.DATA.TRAIN_CROP_SIZE // patch_size)
-    pretrained_model = cfg.TIMESFORMER.PRETRAINED_MODEL
-    load_pretrained(vit, num_classes=vit.num_classes, in_chans=kwargs.get('in_chans', 3),
-                    filter_fn=_conv_filter, img_size=cfg.DATA.TRAIN_CROP_SIZE, num_patches=vit.num_patches+1,
-                    attention_type=vit.attention_type, pretrained_model=pretrained_model)
-    if no_head:
-        vit.head = None
-    return vit
-
-if __name__ == '__main__':
-    from utils.parser import parse_args, load_config
-
-    opt = parse_args()
-    opt.cfg_file = "models/configs/Kinetics/TimeSformer_divST_8x32_224.yaml"
-    config = load_config(opt)
-    model = get_vit_base_patch16_224(cfg=config)
-    # model = get_aux_token_vit(cfg=config)
-
-    sample = torch.ones((2, 3, 8, 224, 224))
-    out1 = model(sample)
-    # out2 = model(sample, is_flow=True)
-    out2 = torch.ones_like(out1)
-    print(out1.shape, out2.shape)
-    loss = torch.sum(out1 + out2)
-    loss.backward()
-
-    # ckpt = torch.load("/home/kanchanaranasinghe/repo/dino/checkpoints/dino_b_02/checkpoint0040.pth")
-    # renamed_checkpoint = {x[len("backbone."):]: y for x, y in ckpt['teacher'].items() if x.startswith("backbone.")}
-    # msg = model.load_state_dict(renamed_checkpoint, strict=False)
-    # print(f"Loaded model with msg: {msg}")
