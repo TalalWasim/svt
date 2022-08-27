@@ -737,8 +737,8 @@ def get_masked_vit_base_patch16_224(cfg, no_head=False, no_mask=False, **kwargs)
         vit.encoder_to_decoder=None
     
     vit.attention_type = cfg.TIMESFORMER.ATTENTION_TYPE
-    # if len(cfg.TIMESFORMER.PRETRAINED_MODEL)>0:
-    #     vit.load_state_dict(torch.load(cfg.TIMESFORMER.PRETRAINED_MODEL), strict=False)
+    if len(cfg.TIMESFORMER.PRETRAINED_MODEL)>0:
+        vit.load_state_dict(torch.load(cfg.TIMESFORMER.PRETRAINED_MODEL), strict=False)
 
     
     return vit

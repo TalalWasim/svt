@@ -32,4 +32,4 @@ python -m torch.distributed.launch \
   DATA.RAND_FR True \
   NUM_GPUS 2 \
   DATA_LOADER.NUM_WORKERS 6 \
-  TIMESFORMER.PRETRAINED_MODEL '../pretrained/enc_mae_dec_vmae.pth'
+  TIMESFORMER.PRETRAINED_MODEL '../pretrained/enc_vmae_dec_vmae.pth'
