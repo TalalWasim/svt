@@ -302,7 +302,7 @@ class MaskedVisionTransformerEncoder(nn.Module):
         self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches + 1, embed_dim))
         self.pos_drop = nn.Dropout(p=drop_rate)
         if self.attention_type != 'space_only':
-            self.time_embed = nn.Parameter(torch.zeros(1, num_frames, embed_dim))
+            self.time_embed = nn.Parameter(torch.zeros(1, num_frames//tubelet_size, embed_dim))
             self.time_drop = nn.Dropout(p=drop_rate)
 
         # Attention Blocks

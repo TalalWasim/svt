@@ -9,7 +9,7 @@
 
 PROJECT_PATH="./"
 DATA_PATH="../datasets/kinetics-dataset/k400_resized_2/annotations_mini"
-EXP_NAME="k400_mini/svt_masked_30_vmae"
+EXP_NAME="k400_mini/svt_masked_30_mae_vmae"
 
 cd "$PROJECT_PATH" || exit
 

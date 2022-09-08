@@ -10,8 +10,8 @@
 
 
 PROJECT_PATH="./"
-DATA_PATH="../datasets/kinetics-dataset/k400_resized/annotations_svt"
-EXP_NAME="svt_mae_100_test"
+DATA_PATH="../datasets/kinetics-dataset/k400_resized_2/annotations_svt"
+EXP_NAME="svt_mae_100"
 
 cd "$PROJECT_PATH" || exit
 
